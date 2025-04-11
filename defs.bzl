@@ -14,6 +14,37 @@
 
 load("@rules_compdb//:aspects.bzl", "CompilationAspect", "compilation_database_aspect")
 
+# 在调用rules_compdb的BUILD或bzl文件中添加以下代码
+def _custom_json_encode(obj, indent=None):
+    """无依赖的JSON序列化实现，支持Bazel Struct/字典/列表/基础类型"""
+    if isinstance(obj, struct):  # 处理Bazel Struct类型
+        obj = {k: getattr(obj, k) for k in dir(obj)}
+    if isinstance(obj, dict):    # 处理字典
+        items = [
+            "\"%s\": %s" % (k, _custom_json_encode(v, indent))
+            for k, v in obj.items()
+        ]
+        if indent:
+            inner = ",\n".join([indent + "  " + i for i in items])
+            return "{\n%s\n%s}" % (inner, indent)
+        else:
+            return "{%s}" % ", ".join(items)
+    elif isinstance(obj, list):  # 处理列表
+        items = [_custom_json_encode(v, indent) for v in obj]
+        if indent:
+            inner = ",\n".join([indent + "  " + i for i in items])
+            return "[\n%s\n%s]" % (inner, indent)
+        else:
+            return "[%s]" % ", ".join(items)
+    elif isinstance(obj, bool):  # 布尔值转小写
+        return "true" if obj else "false"
+    elif obj == None:            # None转null
+        return "null"
+    elif isinstance(obj, (int, float)):  # 数字类型直接返回
+        return str(obj)
+    else:                        # 字符串转义处理
+        return "\"%s\"" % str(obj).replace("\\", "\\\\").replace("\"", "\\\"")
+
 def _compilation_database_impl(ctx):
     # Generates a single compile_commands.json file with the
     # transitive depset of specified targets.
@@ -37,7 +68,7 @@ def _compilation_database_impl(ctx):
     content = compilation_db.to_list()
     if ctx.attr.unique:
         content = list({element.file: element for element in content}.values())
-    content = json.encode(content)
+    content = _custom_json_encode(content)
     content = content.replace("__EXEC_ROOT__", exec_root)
     content = content.replace("-isysroot __BAZEL_XCODE_SDKROOT__", "")
     ctx.actions.write(output = ctx.outputs.filename, content = content)
