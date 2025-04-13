@@ -14,12 +14,20 @@
 
 load("@rules_compdb//:aspects.bzl", "CompilationAspect", "compilation_database_aspect")
 
-# 在调用rules_compdb的BUILD或bzl文件中添加以下代码
 def _custom_json_encode(obj, indent=None):
     """无依赖的JSON序列化实现，支持Bazel Struct/字典/列表/基础类型"""
-    if isinstance(obj, struct):  # 处理Bazel Struct类型
+    # 优先处理可序列化对象
+    if hasattr(obj, "to_dict"):  
+        obj = obj.to_dict()
+    elif hasattr(obj, "to_json"):  
+        return obj.to_json()
+    
+    # 处理Bazel Struct类型（通过dir()获取属性并转为字典）
+    if hasattr(obj, "to_proto"):  # Bazel struct的独有特征[3](@ref)
         obj = {k: getattr(obj, k) for k in dir(obj)}
-    if isinstance(obj, dict):    # 处理字典
+    
+    # 处理字典类型（检查items()方法）
+    if hasattr(obj, "items"):    
         items = [
             "\"%s\": %s" % (k, _custom_json_encode(v, indent))
             for k, v in obj.items()
@@ -29,20 +37,27 @@ def _custom_json_encode(obj, indent=None):
             return "{\n%s\n%s}" % (inner, indent)
         else:
             return "{%s}" % ", ".join(items)
-    elif isinstance(obj, list):  # 处理列表
+    # 处理列表类型（检查__iter__且非字符串）
+    elif hasattr(obj, "__iter__") and not (hasattr(obj, "strip") and isinstance(obj, str)):  
         items = [_custom_json_encode(v, indent) for v in obj]
         if indent:
             inner = ",\n".join([indent + "  " + i for i in items])
             return "[\n%s\n%s]" % (inner, indent)
         else:
             return "[%s]" % ", ".join(items)
-    elif isinstance(obj, bool):  # 布尔值转小写
-        return "true" if obj else "false"
-    elif obj == None:            # None转null
+    # 处理布尔值（通过直接值判断）
+    elif obj is True:  
+        return "true"
+    elif obj is False:
+        return "false"
+    # 处理None
+    elif obj is None:            
         return "null"
-    elif isinstance(obj, (int, float)):  # 数字类型直接返回
+    # 处理数字类型（检查int/float的字符串形式）
+    elif str(obj).lstrip("-").replace(".", "", 1).isdigit():  
         return str(obj)
-    else:                        # 字符串转义处理
+    # 其他类型视为字符串（包含转义处理）
+    else:                        
         return "\"%s\"" % str(obj).replace("\\", "\\\\").replace("\"", "\\\"")
 
 def _compilation_database_impl(ctx):
